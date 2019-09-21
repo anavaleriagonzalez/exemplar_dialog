@@ -22,7 +22,7 @@ if use_cuda:
     torch.cuda.manual_seed(123)
 
 '''
-Function to load the model if bootstrapping is enabled
+Function to load the model if resume is enabled
 '''
 
 
@@ -36,17 +36,19 @@ The training function
 def train(options, model):
 
     inv_vocab = {}
-    with open("data/vocab.txt", 'r') as f:
+    with open("data/vocab_final.txt", 'r') as f:
             tokens = [line.strip() for line in f.readlines()]
 
     for i, token in enumerate(tokens):
         inv_vocab[i] = token
+    vocab_size = len(inv_vocab)
 
+   
     model.train()
     optimizer = optim.Adam(model.parameters(), options.lr)
     if options.resume:
-        load_model_state(model, options.resume + "_model.pth")
-        load_model_state(optimizer, options.resume + "_optimer_state.pth")
+        load_model_state(model, "models/"+options.resume + "_model.pth")
+        load_model_state(optimizer, "models/"+options.resume + "_optimer_state.pth")
     else:
         init_param(model)
     print("Model built and initialized!")
@@ -55,6 +57,8 @@ def train(options, model):
     ret_data = load("data/sims.json")
     train_ret, dev_ret, test_ret = ret_data["train"], ret_data['dev'] , ret_data['test']
 
+    slots_data = load("data/slot_info.json")
+    train_slots, dev_slots, test_slots = ret_data["train"], ret_data['dev'] , ret_data['test']
 
     
 
@@ -66,9 +70,9 @@ def train(options, model):
                                   collate_fn=batchify)
 
     elif options.hybrid_slot:
-        train_dataloader = DataLoader([train,train_ret,train_slots], batch_size=options.bt_siz, shuffle=False, num_workers=20,
+        train_dataloader = DataLoader([train[i]+train_ret[i]+train_slots[i] for i in range(len(train))], batch_size=options.bt_siz, shuffle=False, num_workers=20,
                                   collate_fn=batchify)
-        valid_dataloader = DataLoader([dev, dev_ret, dev_slots], batch_size=options.bt_siz, shuffle=False, num_workers=20,
+        valid_dataloader = DataLoader([dev[i]+dev_ret[i]+dev_slots[i] for i in range(len(dev))], batch_size=options.bt_siz, shuffle=False, num_workers=20,
                                   collate_fn=batchify)
 
     else:
@@ -82,7 +86,7 @@ def train(options, model):
     print("Training set {} Validation set {}".format(len(train), len(dev)))
 
 
-    criteria = nn.CrossEntropyLoss(ignore_index=9182, size_average=False)
+    criteria = nn.CrossEntropyLoss(ignore_index=vocab_size, size_average=False)
     if use_cuda:
         criteria.cuda()
 
@@ -108,7 +112,7 @@ def train(options, model):
             u3 = u3[:, 1:].contiguous().view(-1)
 
             loss = criteria(preds, u3)
-            target_tokens = u3.ne(9182).long().sum().item()
+            target_tokens = u3.ne(vocab_size).long().sum().item()
 
             num_words += target_tokens
             tr_loss += loss.item()
@@ -155,7 +159,7 @@ def generate(model, ses_encoding, options):
     beam = options.beam
 
     n_candidates, final_candids = [], []
-    candidates = [([4758], 0, 0)]
+    candidates = [([1139], 0, 0)]
     gen_len, max_gen_len = 1, 20
 
     # we provide the top k options/target defined each time
@@ -207,7 +211,7 @@ def generate(model, ses_encoding, options):
 
 # sample a sentence from the test set by using beam search
 def inference_beam(dataloader, model, inv_dict, options):
-    criteria = nn.CrossEntropyLoss(ignore_index=9182, size_average=False)
+    criteria = nn.CrossEntropyLoss(ignore_index=9537, size_average=False)
     if use_cuda:
         criteria.cuda()
 
@@ -271,6 +275,13 @@ def main():
     # dictionary data is like ('</s>', 2, 588827, 785135)
     # so i believe that the first is the ids are assigned by frequency
     # thinking to use a counter collection out here maybels
+    inv_vocab = {}
+    with open("data/vocab_final.txt", 'r') as f:
+            tokens = [line.strip() for line in f.readlines()]
+
+    for i, token in enumerate(tokens):
+        inv_vocab[i] = token
+    vocab_size = len(inv_vocab)+1
 
     parser = argparse.ArgumentParser(description='HRED parameter options')
     parser.add_argument('-n', dest='name',default='trial', help='enter suffix for model files')
@@ -295,7 +306,7 @@ def main():
     parser.add_argument('-lr', dest='lr', type=float, default=0.001, help='learning rate for optimizer')
     parser.add_argument('-bs', dest='bt_siz', type=int, default=100, help='batch size')
     parser.add_argument('-bms', dest='beam', type=int, default=1, help='beam size for decoding')
-    parser.add_argument('-vsz', dest='vocab_size', type=int, default=9183, help='size of vocabulary')
+    parser.add_argument('-vsz', dest='vocab_size', type=int, default=vocab_size, help='size of vocabulary')
     parser.add_argument('-esz', dest='emb_size', type=int, default=100, help='embedding size enc/dec same')
     parser.add_argument('-uthid', dest='ut_hid_size', type=int, default=100, help='encoder utterance hidden state')
     parser.add_argument('-seshid', dest='ses_hid_size', type=int, default=100, help='encoder session hidden state')

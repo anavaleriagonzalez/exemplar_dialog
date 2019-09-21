@@ -158,7 +158,8 @@ def get_delex(path):
                 new_ont[value] = key
     return new_ont
 
+'''
+train, dev, test = create_splits("data/data_preprocessed_acts.json", "data/ontology.json")
 
-#train, dev, test = create_splits("data/data_preprocessed.json", "data/ontology.json")
-
-#get_vocab(train+dev+test)
+get_vocab(train+dev+test)
+'''

@@ -11,18 +11,18 @@ use_cuda = torch.cuda.is_available()
 
 
 
-
 # encode each sentence utterance into a single vector
 class UtteranceEncoder(nn.Module):
     def __init__(self, vocab_size, emb_size, hid_size, options):
         super(UtteranceEncoder, self).__init__()
+        
         self.use_embed = options.use_embed
         self.hid_size = hid_size
         self.num_lyr = options.num_lyr
         self.drop = nn.Dropout(options.drp)
         self.direction = 2 if options.bidi else 1
         # by default they requires grad is true
-        self.embed = nn.Embedding(vocab_size, emb_size, padding_idx=9182, sparse=False)
+        self.embed = nn.Embedding(vocab_size, emb_size, padding_idx=9537, sparse=False)
         if self.use_embed:
             pretrained_weight = self.load_embeddings(vocab_size, emb_size)
             self.embed.weight.data.copy_(torch.from_numpy(pretrained_weight))
@@ -37,7 +37,8 @@ class UtteranceEncoder(nn.Module):
             h_0 = h_0.cuda()
         token_emb = self.embed(x)
         token_emb = self.drop(token_emb)
-        token_emb = torch.nn.utils.rnn.pack_padded_sequence(token_emb, x_lengths, batch_first=True)
+        token_emb = torch.nn.utils.rnn.pack_padded_sequence(token_emb, x_lengths, batch_first=True, enforce_sorted=False)
+       
         gru_out, gru_hid = self.rnn(token_emb, h_0)
         # assuming dimension 0, 1 is for layer 1 and 2, 3 for layer 2
         if self.direction == 2:
@@ -108,157 +109,8 @@ class InterUtteranceEncoder(nn.Module):
 
 
 
-class RetrieveEncoder(nn.Module):
-    def __init__(self, vocab_size, emb_size, hid_size, options):
-        super(RetrieveEncoder, self).__init__()
-        self.use_embed = options.use_embed
-        self.hid_size = hid_size
-        self.num_lyr = options.num_lyr
-        self.drop = nn.Dropout(options.drp)
-        self.direction = 2 if options.bidi else 1
-        # by default they requires grad is true
-        self.embed = nn.Embedding(vocab_size, emb_size, padding_idx=9182, sparse=False)
-        if self.use_embed:
-            pretrained_weight = self.load_embeddings(vocab_size, emb_size)
-            self.embed.weight.data.copy_(torch.from_numpy(pretrained_weight))
-        self.rnn = nn.GRU(input_size=emb_size, hidden_size=hid_size,
-                          num_layers=self.num_lyr, bidirectional=options.bidi, batch_first=True, dropout=options.drp)
 
-    def forward(self, inp):
-        x, x_lengths = inp[0], inp[1]
-        bt_siz, seq_len = x.size(0), x.size(1)
-        h_0 = Variable(torch.zeros(self.direction * self.num_lyr, bt_siz, self.hid_size))
-        if use_cuda:
-            h_0 = h_0.cuda()
-        token_emb = self.embed(x)
-        token_emb = self.drop(token_emb)
-        token_emb = torch.nn.utils.rnn.pack_padded_sequence(token_emb, x_lengths, batch_first=True)
-        gru_out, gru_hid = self.rnn(token_emb, h_0)
-        # assuming dimension 0, 1 is for layer 1 and 2, 3 for layer 2
-        if self.direction == 2:
-            gru_hids = []
-            for i in range(self.num_lyr):
-                x_hid_temp, _ = torch.max(gru_hid[2*i:2*i + 2, :, :], 0, keepdim=True)
-                gru_hids.append(x_hid_temp)
-            gru_hid = torch.cat(gru_hids, 0)
-        # gru_out, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out, batch_first=True)
-        # using gru_out and returning gru_out[:, -1, :].unsqueeze(1) is wrong coz its all 0s careful! it doesn't adjust for variable timesteps
-
-        gru_hid = gru_hid[self.num_lyr-1, :, :].unsqueeze(0)
-        # take the last layer of the encoder GRU
-        gru_hid = gru_hid.transpose(0, 1)
-
-        return gru_hid
-
-
-    def load_embeddings(self, vocab_size, emb_size):
-        vocab_file = './data/vocab.txt'
-        embed_file = './data/glove.6B.50d.txt'
-        vocab = {}
-        embeddings_index = {}
-        with open(vocab_file, 'r') as f:
-            tokens = [line.strip() for line in f.readlines()]
-
-        for i, token in enumerate(tokens):
-            
-            vocab[token] = i
-
-        #f = open(embed_file)
-        with open(embed_file, 'r') as fp:
-            f = fp.readlines()
-        for line in f:
-            values = line.split()
-            word = values[0]
-            if len(values) > 301:
-                continue
-            coefs = np.asarray(values[1:], dtype='float32')
-            embeddings_index[word] = coefs
-
-        embedding_matrix = np.zeros((vocab_size, emb_size))
-        for word, i in vocab.items():
-            embedding_vector = embeddings_index.get(word)
-            if embedding_vector is not None:
-                # words not found in embedding index will be all-zeros.
-		#print(embedding_vector)
-                embedding_matrix[i] = embedding_vector
-        print(embedding_matrix.shape)
-        return embedding_matrix
-
-class SlotEncoder(nn.Module):
-    def __init__(self, vocab_size, emb_size, hid_size, options):
-        super(SlotEncoder, self).__init__()
-        self.use_embed = options.use_embed
-        self.hid_size = hid_size
-        self.num_lyr = options.num_lyr
-        self.drop = nn.Dropout(options.drp)
-        self.direction = 2 if options.bidi else 1
-        # by default they requires grad is true
-        self.embed = nn.Embedding(vocab_size, emb_size, padding_idx=9182, sparse=False)
-        if self.use_embed:
-            pretrained_weight = self.load_embeddings(vocab_size, emb_size)
-            self.embed.weight.data.copy_(torch.from_numpy(pretrained_weight))
-        self.rnn = nn.GRU(input_size=emb_size, hidden_size=hid_size,
-                          num_layers=self.num_lyr, bidirectional=options.bidi, batch_first=True, dropout=options.drp)
-
-    def forward(self, inp):
-        x, x_lengths = inp[0], inp[1]
-        bt_siz, seq_len = x.size(0), x.size(1)
-        h_0 = Variable(torch.zeros(self.direction * self.num_lyr, bt_siz, self.hid_size))
-        if use_cuda:
-            h_0 = h_0.cuda()
-        token_emb = self.embed(x)
-        token_emb = self.drop(token_emb)
-        token_emb = torch.nn.utils.rnn.pack_padded_sequence(token_emb, x_lengths, batch_first=True)
-        gru_out, gru_hid = self.rnn(token_emb, h_0)
-        # assuming dimension 0, 1 is for layer 1 and 2, 3 for layer 2
-        if self.direction == 2:
-            gru_hids = []
-            for i in range(self.num_lyr):
-                x_hid_temp, _ = torch.max(gru_hid[2*i:2*i + 2, :, :], 0, keepdim=True)
-                gru_hids.append(x_hid_temp)
-            gru_hid = torch.cat(gru_hids, 0)
-        # gru_out, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out, batch_first=True)
-        # using gru_out and returning gru_out[:, -1, :].unsqueeze(1) is wrong coz its all 0s careful! it doesn't adjust for variable timesteps
-
-        gru_hid = gru_hid[self.num_lyr-1, :, :].unsqueeze(0)
-        # take the last layer of the encoder GRU
-        gru_hid = gru_hid.transpose(0, 1)
-
-        return gru_hid
-
-
-    def load_embeddings(self, vocab_size, emb_size):
-        vocab_file = './data/vocab.txt'
-        embed_file = './data/glove.6B.50d.txt'
-        vocab = {}
-        embeddings_index = {}
-        with open(vocab_file, 'r') as f:
-            tokens = [line.strip() for line in f.readlines()]
-
-        for i, token in enumerate(tokens):
-            
-            vocab[token] = i
-
-        #f = open(embed_file)
-        with open(embed_file, 'r') as fp:
-            f = fp.readlines()
-        for line in f:
-            values = line.split()
-            word = values[0]
-            if len(values) > 301:
-                continue
-            coefs = np.asarray(values[1:], dtype='float32')
-            embeddings_index[word] = coefs
-
-        embedding_matrix = np.zeros((vocab_size, emb_size))
-        for word, i in vocab.items():
-            embedding_vector = embeddings_index.get(word)
-            if embedding_vector is not None:
-                # words not found in embedding index will be all-zeros.
-		#print(embedding_vector)
-                embedding_matrix[i] = embedding_vector
-        print(embedding_matrix.shape)
-        return embedding_matrix
+  
 
 # decode the hidden state
 class Decoder(nn.Module):
@@ -274,7 +126,7 @@ class Decoder(nn.Module):
         self.tanh = nn.Tanh()
         self.shared_weight = options.shrd_dec_emb
 
-        self.embed_in = nn.Embedding(options.vocab_size, self.emb_size, padding_idx=9182, sparse=False)
+        self.embed_in = nn.Embedding(options.vocab_size, self.emb_size, padding_idx=9537, sparse=False)
         if not self.shared_weight:
             self.embed_out = nn.Linear(self.emb_size, options.vocab_size, bias=False)
 
@@ -302,7 +154,7 @@ class Decoder(nn.Module):
         # below will be used later as a crude approximation of an LM
         emb_inf_vec = self.emb_inf(target_emb)
 
-        target_emb = torch.nn.utils.rnn.pack_padded_sequence(target_emb, target_lengths, batch_first=True)
+        target_emb = torch.nn.utils.rnn.pack_padded_sequence(target_emb, target_lengths, batch_first=True, enforce_sorted=False)
 
         #print(context_encoding.size())
         init_hidn = self.tanh(self.ses_to_dec(context_encoding))
@@ -469,7 +321,7 @@ class HSeq2seq_retrieve(nn.Module):
 
         
         o1, o2 = self.utt_enc((u1, u1_lenghts)), self.utt_enc((u2, u2_lenghts))
-        o3 = self.utt_enc((u3, u3_lenghts))
+        o3 = self.utt_enc((ret3, ret3_lenghts))
         qu_seq = torch.cat((o1, o2, o3), 1)
         final_session_o = self.intutt_enc(qu_seq)
         preds, lmpreds = self.dec((final_session_o, u3, u3_lenghts))
@@ -478,30 +330,54 @@ class HSeq2seq_retrieve(nn.Module):
         return preds, lmpreds
 
 
+
 class HSeq2seq_retrieve_slot(nn.Module):
     def __init__(self, options):
         super(HSeq2seq_retrieve_slot, self).__init__()
         self.seq2seq = options.seq2seq
         self.utt_enc = UtteranceEncoder(options.vocab_size, options.emb_size, options.ut_hid_size, options)
-        self.slot_enc = SlotEncoder(options.vocab_size, options.emb_size, options.ut_hid_size, options)
-        self.ret_enc = RetrieveEncoder(options.vocab_size, options.emb_size, options.ut_hid_size, options)
         self.intutt_enc = InterUtteranceEncoder(options.ses_hid_size, options.ut_hid_size, options)
         self.dec = Decoder(options)
 
     def forward(self, batch):
-        u1, u1_lenghts, u2, u2_lenghts, u3, u3_lenghts, ret3, ret3_lenghts ,slot1, slot1_lenghts, slot2, slot2_lenghts = batch[0], batch[1], batch[2], batch[3], batch[4], batch[5], batch[6], batch[7] , batch[8], batch[9], batch[10], batch[11]
+        u1, u1_lenghts, u2, u2_lenghts, u3, u3_lenghts, ret3, ret3_lenghts, slots1, len1, slots2, len2  = batch[0], batch[1], batch[2], batch[3], batch[4], batch[5], batch[6], batch[7] , batch[8], batch[9], batch[10], batch[11] 
         if use_cuda:
             u1 = u1.cuda()
             u2 = u2.cuda()
             u3 = u3.cuda()
 
         o1, o2 = self.utt_enc((u1, u1_lenghts)), self.utt_enc((u2, u2_lenghts))
-
-        o1_slot, o2_slot = self.slot_enc((slot1, slot1_lenghts)), self.slot_enc((slot2, slot2_lenghts))
-        o3 = self.ret_enc((u3, u3_lenghts))
+        o1_slots, o2_slots = self.utt_enc((slots1, len1)), self.utt_enc((slots2, len2))
+        o3 = self.utt_enc((ret3, ret3_lenghts))
         qu_seq = torch.cat((o1, o1_slots, o2, o2_slots, o3), 1)
         final_session_o = self.intutt_enc(qu_seq)
         preds, lmpreds = self.dec((final_session_o, u3, u3_lenghts))
+
+        
+        return preds, lmpreds
+
+
+
+class HSeq2seq_retrieve_slot_class(nn.Module):
+    def __init__(self, options):
+        super(HSeq2seq_retrieve_slot_class, self).__init__()
+        self.seq2seq = options.seq2seq
+        self.utt_enc = UtteranceEncoder(options.vocab_size, options.emb_size, options.ut_hid_size, options)
+        self.dec = Decoder(options)
+
+    def forward(self, batch):
+        u1, u1_lenghts, u2, u2_lenghts, u3, u3_lenghts, ret3, ret3_lenghts, slots1, len1, slots2, len2  = batch[0], batch[1], batch[2], batch[3], batch[4], batch[5], batch[6], batch[7] , batch[8], batch[9], batch[10], batch[11] 
+        if use_cuda:
+            u1 = u1.cuda()
+            u2 = u2.cuda()
+            u3 = u3.cuda()
+
+        o1, o2 = self.utt_enc((u1, u1_lenghts)), self.utt_enc((u2, u2_lenghts))
+        o1_slots, o2_slots = self.utt_enc((slots1, len1)), self.utt_enc((slots2, len2))
+        o3 = self.utt_enc((ret3, ret3_lenghts))
+        qu_seq = torch.cat((o1, o1_slots, o2, o2_slots, o3), 1)
+        final_session_o = self.intutt_enc(qu_seq)
+        preds, lmpreds = self.dec((final_session_o, u3, u3_lenghts)) #could either decode the tokens or add a linear layer
 
         
         return preds, lmpreds
